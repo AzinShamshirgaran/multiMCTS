@@ -5,10 +5,10 @@ Created on Thu Apr 15 13:11:11 2021
 
 @author: shamano
 """
-
+import dataset as ds
 import math
 import numpy as np
-import scipy.io as sio
+#import scipy.io as sio
 #from scipy.stats import expon
 #import ongp as op
 BUFFER_SIZE=50000
@@ -90,7 +90,7 @@ class OrienteeringEdge:
         self.source = source
         self.dest = dest
         self.alpha = alpha
-        self.d =abs( (self.source.x-self.dest.x) )+ abs((self.source.y-self.dest.y) ) #math.sqrt((self.source.x-self.dest.x)**2 + (self.source.y-self.dest.y)**2) #abs( (self.source.x-self.dest.x) )+ abs((self.source.y-self.dest.y) )
+        self.d = math.sqrt((self.source.x-self.dest.x)**2 + (self.source.y-self.dest.y)**2) #abs( (self.source.x-self.dest.x) )+ abs((self.source.y-self.dest.y) ) #abs( (self.source.x-self.dest.x) )+ abs((self.source.y-self.dest.y) )
         self.offset = self.alpha * self.d
         self.parameter = (1-self.alpha)*self.d
         self.buffer = self.offset + np.random.uniform(0,1, size=BUFFER_SIZE) #np.random.exponential(scale=self.parameter,size=BUFFER_SIZE)
@@ -133,96 +133,73 @@ def set_silent():
     VERBOSE=False
         
 class OrienteeringGraph:
-    def __init__(self,fname=None):
-        if type(fname) == str:
-            if VERBOSE:
-                print('Loading graph ',fname,' ....')
-            content = sio.loadmat(fname)
-            alpha = 0.5#contents['alpha'][0][0]
+    def __init__(self):
+        #if type(fname) == str:
+        #if VERBOSE:
+           # print('Loading graph ',fname,' ....')
+        #content = sio.loadmat('2018-06-21_ripperdan.mat')
+        alpha = 0.5#contents['alpha'][0][0]
 
-            #coords = contents['xy']
-            #print("coord {}".format(coords))
-            contents = sio.loadmat('graph_test_10.mat')
-            #sensor_reading = contents['rewards']
-            #print("sensory_reading {}".format(sensor_reading))
-            edge_list = contents['edge_list']
-            #print("edges {}".format(edge_list))
-            coords=[[0 ,0] ,[1 ,3] ,[2 ,6], [4 ,5] ,[3 ,7] ,[6 ,2] ,[7 ,2] ,[8 ,3] ,[9 ,7] ,[9 ,9]]
-            value_sensory_reading=[0.25, 0.38, 0.549, 0.435, 0.41, 0.330, 0.204, 0.619,
-                        0.299, 0.266]
-                #[11.93, 11.98, 12.09, 12.1, 11.14, 12.05, 11.08, 12.11, 12.26, 12.24]
-            #for i in coords:
-             #   value_sensory_reading.append(sensor_reading[i[0],i[1]])
-            npoints = len(coords)
-            self.vertices = dict()
-            self.total_reward = -1
-            
-            for i in range(npoints):
-                nv = OrienteeringVertex(coords[i][0],coords[i][1],value_sensory_reading[i],i) #sensor_reading[i,1]
-                self.vertices[i]= nv
-                
+        #coords = contents['xy']
+        #print("coord {}".format(coords))
+        #contents = sio.loadmat('graph_test_10.mat')
+        #sensor_reading = content['krig_val']
+        #print("sensory_reading {}".format(sensor_reading))
+        #edge_list = contents['edge_list']
+        #print("edges {}".format(edge_list))
+        """
+        coords= [[0,0],[32, 13], [23, 39], [43, 18], [16, 38], [41, 21],[26, 26],
+             [ 7, 42], [ 2, 46], [32, 43], [18, 18], [48,  8],[17, 23], [41, 31], [39, 33],
+               [27, 42], [13, 44], [43,3], [46, 42], [12, 16], [23,1], [9,7], [17,  1], [31, 17],
+                [36,38],  [13,48], [23, 20], [12, 14], [34, 40], [50,50]]
+        value_sensory_reading = [0.25, 0.028, 0.549, 0.435, 0.41, 0.330, 0.204, 0.119,
+                                 0.299, 0.0766, 0.25, 0.028, 0.549, 0.435, 0.41, 0.130, 0.204, 0.619,
+                                 0.099, 0.1266, 0.45, 0.028, 0.549, 0.435, 0.41, 0.530, 0.04, 0.219,
+                                 0.219, 0.16]
+        """
+        coords= ds.coords
 
-            for i in range(npoints):
-                for j in range(npoints):
-                    if (i != j): #and ( i != self.end_vertex ):  # no loops and end vertex has no outgoing edges
-                        edge = OrienteeringEdge(self.vertices[i], self.vertices[j], alpha)
-                        self.vertices[i].add_edge(edge)
+        value_sensory_reading =ds.value_sensory_reading
 
-            #nedges = edge_list.shape[0]
-            #for i in range(nedges):
-             #   edge = OrienteeringEdge(self.vertices[edge_list[i][0]-1], self.vertices[edge_list[i][1]-1], alpha)
-              #  self.vertices[edge_list[i][0]-1].add_edge(edge)
-                
-            self.set_start_vertex(0)
-            self.end_vertex = npoints - 1
-            self.nvertices = npoints
-            #self.budget = 2 #contents['t_max'][0][0]
+
+        #value_sensory_reading=[]
+        #for i in coords:
+         #   value_sensory_reading.append(sensor_reading[i[0],i[1]])
+        #print(value_sensory_reading)
+        npoints = len(coords)
+        self.vertices = dict()
+        self.total_reward = -1
+
+        for i in range(npoints):
+            nv = OrienteeringVertex(coords[i][0],coords[i][1],value_sensory_reading[i],i) #sensor_reading[i,1]
+            self.vertices[i]= nv
+
+
+        for i in range(npoints):
+            for j in range(npoints):
+                if (i != j): #and ( i != self.end_vertex ):  # no loops and end vertex has no outgoing edges
+                    edge = OrienteeringEdge(self.vertices[i], self.vertices[j], alpha)
+                    self.vertices[i].add_edge(edge)
+
+        #nedges = edge_list.shape[0]
+        #for i in range(nedges):
+         #   edge = OrienteeringEdge(self.vertices[edge_list[i][0]-1], self.vertices[edge_list[i][1]-1], alpha)
+          #  self.vertices[edge_list[i][0]-1].add_edge(edge)
+
+        self.set_start_vertex(0)
+        self.end_vertex = npoints - 1
+        self.nvertices = npoints
+        #self.budget = 2 #contents['t_max'][0][0]
+
+        self.distance_matrix = np.zeros((npoints,npoints),dtype=np.float32)
+        for i in range(npoints):
+            for j in range(npoints):
+                if i!= j:
+                    self.distance_matrix[i][j] = self.get_vertex_by_id(i).get_edge_towards_vertex(j).d
+        #if VERBOSE:
+           # print('Done!')
             
-            self.distance_matrix = np.zeros((npoints,npoints),dtype=np.float32)
-            for i in range(npoints):
-                for j in range(npoints):
-                    if i!= j:
-                        self.distance_matrix[i][j] = self.get_vertex_by_id(i).get_edge_towards_vertex(j).d
-            if VERBOSE:
-                print('Done!')
-            
-        else:
-            if VERBOSE:
-                print("Generating random orienteering graph...")
-            if type(fname)== int:
-                self.nvertices = fname
-            else:
-                self.nvertices = VERTEX_MIN + int(np.random.random()*(VERTEX_MAX-VERTEX_MIN))
-            self.vertices = dict()
-            
-            self.alpha = 0.5
-            
-            for i in range(self.nvertices):
-                nv = OrienteeringVertex(np.random.random()*MAX_X,np.random.random()*MAX_Y,np.random.random()*MAX_REWARD,i)
-                self.vertices[i]= nv
-                
-            self.set_start_vertex(0)
-            self.end_vertex = self.nvertices - 1          
-                
-            for i in range(self.nvertices):
-                for j in range(self.nvertices):
-                    if (i != j): #and ( i != self.end_vertex ):  # no loops and end vertex has no outgoing edges
-                        edge = OrienteeringEdge(self.vertices[i], self.vertices[j], self.alpha)
-                        self.vertices[i].add_edge(edge)
-                    
-            self.distance_matrix = np.zeros((self.nvertices,self.nvertices),dtype=np.float32)
-            for i in range(self.nvertices):
-                for j in range(self.nvertices):
-                    if (i != j): #and ( i != self.end_vertex ): # do not set values for non-existing edges
-                        self.distance_matrix[i][j] = self.get_vertex_by_id(i).get_edge_towards_vertex(j).d
-            
-            self.budget =  0 #1 + np.sum(self.distance_matrix)/100
-            #self.budget = 1 + 5*np.random.random()
-            self.total_reward = -1
-            
-                 
-            if VERBOSE:
-                print("Done!")
+
         
         
     def neighbors(self,v):  # returns the list of neighbors of v -> for compatibility with NN

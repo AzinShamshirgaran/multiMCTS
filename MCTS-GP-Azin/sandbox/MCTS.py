@@ -8,13 +8,13 @@ Created on Thu Apr 15 21:27:57 2021
 
 
 import sys
-
+import cProfile
 sys.path.append('/home/azin/PycharmProjects/multiMCTS/OrienteeringGraphAzin')
-
+import pstats
 import graph
 import math
 import numpy as np
-import pickle
+#import pickle
 from progress.bar import Bar
 import configparser
 import argparse
@@ -23,16 +23,18 @@ import time
 import os
 import shutil
 import copy
-import ongp as op
-from collections import defaultdict
+import testgp as op
+#from collections import defaultdict
 FAILURE_RETURN = 0
 
 
 BUFFER_DISTANCES = {}
 SUM_BUFFER_DISTANCE = {}
 MEAN_DIST = {}
-KNEAR = 5
+KNEAR = 15
 SAMPLES=1
+
+COMUNICATION_RANGE_DIST=100
 
 class MCTS_node:
     def __init__(self,n,p=None):
@@ -93,44 +95,13 @@ def get_key_with_max_val(d):   # CANDIDATE FOR BETTER IMPLEMENTATION --> should 
 
     a = np.argmax(list(d.values()))
     keys = list(d.keys())
+    #print(keys[a])
     return keys[a]
 
 
-def MCTS_biased_rollout(rollout_data):
-    end_vertex_idx = rollout_data.og.get_end_vertex()
-    if end_vertex_idx == rollout_data.leaf.id:
-        if rollout_data.budget < 0 :
-            return FAILURE_RETURN ,True
-        else:
-            return 0 ,False  
-    done = False
-    reward = 0
-    budget = rollout_data.budget
-    children = [i for i in range(rollout_data.og.get_n_vertices())]
-    bv = rollout_data.treenode
-    while bv is not None:
-        children.remove(bv.node.id)
-        bv = bv.parent
-    current = rollout_data.leaf.id
 
-    while not done:
-        if np.random.uniform() < rollout_data.bias: 
-            new = end_vertex_idx
-        else:
-            new = np.random.choice(children)
-        time_to_go = rollout_data.og.vertices[current].get_edge_towards_vertex(new).sample_cost()
-        reward += rollout_data.og.vertices[new].value
-        if time_to_go > budget:
-            return reward, True # failure
-        if new == end_vertex_idx:
-            done = True
-        else:
-            children.remove(new)
-            budget -= time_to_go
-        current = new
-    return reward, False
 
-def MCTS_IROS_prefill_buffer(g,robot):
+def MCTS_prefill_buffer(g,robot):
     end_id =  g.get_end_vertex()
     for i in range(g.get_n_vertices()):
         for j in range(g.get_n_vertices()):
@@ -172,28 +143,7 @@ def MCTS_IROS_prefill_buffer(g,robot):
             if end_id not in children:
                 children.append(end_id)
             robot.CHILDREN_MAP[i] = list(children[:])
-    #print(CHILDREN_MAP)
-
-def MCTS_get_new_vertex_greedy(g,current,children,budget,unusable=None):
-    end_id = g.get_end_vertex()
-    r = end_id
-    max_reward = -1
-    for i in children:
-        if (i != end_id) and (i not in unusable):
-            v = g.get_vertex_by_id(current)
-
-            failure_prob = ((SUM_BUFFER_DISTANCE[(v.id,i,i,end_id)]>budget).sum())/SAMPLES
-            if failure_prob < FAILURE_PROB :
-                #dist = np.mean(dist1+dist2)
-                dist = MEAN_DIST[(v.id,i,i,end_id)]
-                value = g.vertices[i].value
-                ratio = value / dist
-                if  ratio > max_reward:
-                    r = i
-                    max_reward = ratio  
-    return r
-    
-
+    #print(robot.CHILDREN_MAP)
 
 
 def MCTS_sample_traverse_cost_ids(vs,g):
@@ -207,7 +157,7 @@ def MCTS_sample_traverse_cost_ids(vs,g):
 
 
     
-def MCTS_IROS_pick_action_max(node,og, robot_1):  # only called on a node that is not a leaf
+def MCTS_pick_action_max(node,og, robot_1):  # only called on a node that is not a leaf
     if node.is_leaf():
         print("node id {}".format(node.node.id))
         print("children map {}".format(robot_1.CHILDREN_MAP[node.node.id]))
@@ -221,30 +171,51 @@ def MCTS_IROS_pick_action_max(node,og, robot_1):  # only called on a node that i
 
     
     
-def MCTS_IROS_pick_root_action(root,og, robot_n):  # picks the best action on the root among those who satisfy the failure constraints
+def MCTS_pick_root_action(root,robot, og, g2, robot_n):  # picks the best action on the root among those who satisfy the failure constraints
     candidates = {}
+    candidates_n={}
+    traveresd_n = robot_n.traversed.copy()
+    #root_n = MCTS_node(g2.get_vertices()[robot_n.current_vertex])
+    if robot_n.root_copy is not None:
+        for j in robot_n.root_copy.children:
+            if traveresd_n:
+                if j.node.id not in traveresd_n:
+                    candidates_n[j.node.id]= robot_n.cumulative_reward_list[j.node.id]/ g2.vertices[j.node.id].get_edge_towards_vertex(robot_n.next_location).sample_cost()   #[robot_n.root_copy.Q[j.node.id]]
+    if candidates_n:
+        action_n=max(candidates_n, key=candidates_n.get)   #get_key_with_max_val(candidates_n)
+    else:
+        action_n=None
+    #print("estimated next location of neighbour: {}".format(action_n))
     #print("root children {}".format(root.children))
     #print("robot n traversed {}".format(robot_n.traversed))
-    traveresd_n = robot_n.traversed.copy()
-    if 9 in robot_n.traversed:
-        traveresd_n=traveresd_n.remove(9)
 
-    print(root)
-    if root.node.id != robot_n.current_vertex:
-        if og.vertices[root.node.id].get_edge_towards_vertex(robot_n.current_vertex).sample_cost() < 15:
-            for i in root.children:
-                if traveresd_n:
-                    if i.node.id not in traveresd_n:
-                        if root.F[i.node.id] <= FAILURE_PROB:
-                            candidates[i.node.id] = root.Q[i.node.id]
-        else:
-            for i in root.children:
-                if root.F[i.node.id] <= FAILURE_PROB:
-                    candidates[i.node.id] = root.Q[i.node.id]
-    else:
-        for i in root.children:
-            if root.F[i.node.id] <= FAILURE_PROB:
-                candidates[i.node.id] = root.Q[i.node.id]
+    if 29 in robot_n.traversed:
+        traveresd_n=traveresd_n.remove(29)
+    if action_n != None and action_n != 29 and traveresd_n != None:
+        traveresd_n.append(action_n)
+
+    #print(root)
+    children = set(robot.CHILDREN_MAP[robot.current_vertex]) - set(robot.traversed)
+    #if root.node.id != robot_n.current_vertex:
+        #if og.vertices[root.node.id].get_edge_towards_vertex(robot_n.current_vertex).sample_cost() < COMUNICATION_RANGE_DIST:
+
+    for i in root.children:
+        #if traveresd_n:
+            #if i.node.id not in traveresd_n:
+                #candidates[i.node.id] = root.Q[i.node.id]
+        #else:
+        candidates[i.node.id] = root.Q[i.node.id]
+
+
+
+
+    #for i in children:
+       # if traveresd_n:
+        #    if i not in traveresd_n:
+        #        candidates[i] = root.Q[i]
+        #else:
+       #     candidates[i] = root.Q[i]
+
 
     if candidates:
         return get_key_with_max_val(candidates)
@@ -261,23 +232,7 @@ def MCTS_IROS_pick_root_action(root,og, robot_n):  # picks the best action on th
     #else:
       #  return None
 
-def MCTS_pick_action_max_constraints_with_samples(root,og):
-    if root.is_leaf():
-        return root.node.value, 0, None
-    Qval = {}
-    Fval = {}
-    for i in root.children:
-        v,f,_ = MCTS_pick_action_max_constraints_with_samples(i,og)
-        f = max(f,root.F[i.node.id])
-        if ( f < FAILURE_PROB ):  # ignore policies violating constraints
-            Qval[i.node.id] = root.node.value + v
-            Fval[i.node.id] = f
-    if len(Qval) == 0:
-        return 0,1,og.get_end_vertex()  # make last attempt to get to goal
-    else:
-        b_key = get_key_with_max_val(Qval)
-        return Qval[b_key],Fval[b_key],b_key
-        
+
 
 def id_sequence_to_node_sequence(vs,root):
     cp = root
@@ -292,7 +247,7 @@ def id_sequence_to_node_sequence(vs,root):
 # # Implements tree policy. It will either:
 # # pick a child node that has not been tried yet (if it exists)
 # # descend into a child using a constrained UCT and apply itself recursively from there
-def MCTS_IROS_Traverse(current_vertex,g, robot_1):
+def MCTS_Traverse(current_vertex,g, robot_1):
 
     bakcup_init_vertex = current_vertex
 
@@ -320,7 +275,7 @@ def MCTS_IROS_Traverse(current_vertex,g, robot_1):
             traversed.append(down_vertex)
             return traversed
         else:  # all children have been visited; pick one using constrained UCT and recurse down
-            bestAction = MCTS_IROS_pick_action_max(current_vertex,g,robot_1)
+            bestAction = MCTS_pick_action_max(current_vertex,g,robot_1)
             traversed.append(bestAction)
             # return traversed ######## TO BE REMOVED
             if bestAction == g.get_end_vertex():
@@ -330,7 +285,7 @@ def MCTS_IROS_Traverse(current_vertex,g, robot_1):
                 visited[current_vertex.node.id] = True  # this vertex can't be chosen anymore
 
 
-def MCTS_IROS_greedy_rollout(leaf,g,budget,visited, cumulative_reward_list, robot, robot_n):
+def MCTS_greedy_rollout(leaf,g,budget,visited, cumulative_reward_list, robot, robot_n):
     end_vertex_idx = g.get_end_vertex()
 
 
@@ -349,12 +304,12 @@ def MCTS_IROS_greedy_rollout(leaf,g,budget,visited, cumulative_reward_list, robo
         children = set(robot.CHILDREN_MAP[current]) - set(unusable.keys())
         #print(current)
         #print(robot_n.current_vertex)
-        if current != robot_n.current_vertex:
-            if  g.vertices[current].get_edge_towards_vertex(robot_n.current_vertex).sample_cost()  < 5:
-                children = children -set(robot_n.traversed)
+        #if current != robot_n.current_vertex:
+         #   if  g.vertices[current].get_edge_towards_vertex(robot_n.current_vertex).sample_cost()  < COMUNICATION_RANGE_DIST:
+          #      children = children -set(robot_n.traversed)
         children = list(children)
         if not children:
-            children.append(9)
+            children.append(29)
         
 
         look_for_random = True
@@ -368,7 +323,7 @@ def MCTS_IROS_greedy_rollout(leaf,g,budget,visited, cumulative_reward_list, robo
         else:  # len(traversed)<3:
             new = MCTS_get_new_vertex_greedy(g, current, children, budget, unusable)
         """
-        reward += cumulative_reward_list[new] #g.vertices[new].value
+        reward += cumulative_reward_list[new] / g.vertices[current].get_edge_towards_vertex(new).sample_cost() #g.vertices[new].value
 
         traversed.append(new)
         time_to_go = g.vertices[current].get_edge_towards_vertex(new).sample_cost()
@@ -386,7 +341,7 @@ def MCTS_IROS_greedy_rollout(leaf,g,budget,visited, cumulative_reward_list, robo
 
 
 
-def MCTS_IROS_Backup(toadd,reward,failure_rate):
+def MCTS_Backup(toadd,reward,failure_rate):
 
     parent = toadd.parent
     nodebackup = toadd
@@ -452,16 +407,17 @@ def check_early_exit(root):
     else:
         return False
 
-# # THIS IS THE ONE USED FOR THE IROS SUBMISSION
-def MCTS_search_IROS(g, cumulative_reward_list, robot, robot_n):
+
+def MCTS_search(g, g2,  robot, robot_n):
 
     root = MCTS_node(g.get_vertices()[robot.current_vertex])
+    robot.root_copy=root
     end_node_id = g.get_end_vertex()
 
-    for itc_counter in range(robot_1.it):
+    for itc_counter in range(robot.it):
         #print("itc_counter {}".format(itc_counter))
         current_vertex = root
-        vs = MCTS_IROS_Traverse(current_vertex,g, robot)
+        vs = MCTS_Traverse(current_vertex,g, robot)
 
         sequence = id_sequence_to_node_sequence(vs,root)
         parent = sequence[-2]
@@ -496,11 +452,11 @@ def MCTS_search_IROS(g, cumulative_reward_list, robot, robot_n):
 
                 cost_to_leaf = MCTS_sample_traverse_cost_ids(couples,g)
 
-                traversed,fail,reward = MCTS_IROS_greedy_rollout(leaf,g,robot.current_budget-cost_to_leaf,unusable, cumulative_reward_list, robot, robot_n)
+                traversed,fail,reward = MCTS_greedy_rollout(leaf,g,robot.current_budget-cost_to_leaf,unusable, robot.cumulative_reward_list, robot, robot_n)
                 fail_list.append(fail)
                 if not fail:
 
-                    reward += cumulative_reward_list[vs[-1]] #g.vertices[vs[-1]].value
+                    reward += robot.cumulative_reward_list[vs[-1]] / g.vertices[leaf.node.id].get_edge_towards_vertex(vs[-2]).sample_cost() #g.vertices[vs[-1]].value
                     rewards_list.append(reward)
 
             if not rewards_list:
@@ -516,20 +472,37 @@ def MCTS_search_IROS(g, cumulative_reward_list, robot, robot_n):
 
         robot.failure_rate = sum(fail_list)/len(fail_list)
 
-        MCTS_IROS_Backup(toadd,robot.reward,robot.failure_rate)
+        MCTS_Backup(toadd,robot.reward,robot.failure_rate)
         
         if (itc_counter+1) % 10 == 0:
             if check_early_exit(root):
                 # print("Exiting early: ",itc_counter)
                 break
 
-    bestAction = MCTS_IROS_pick_root_action(root,g, robot_n) #MCTS_IROS_Traverse(root,g) #MCTS_IROS_pick_root_action(root,g)
+    bestAction = MCTS_pick_root_action(root,robot, g, g2, robot_n) #MCTS_Traverse(root,g) #MCTS_pick_root_action(root,g)
     
 
+
+    #print(bestAction)
     if bestAction is not None:
-        return root,root.node.get_edge_towards_vertex(bestAction)
+        #print(root.node.get_edge_towards_vertex(bestAction).dest.id)
+        if root.node.get_edge_towards_vertex(bestAction).dest.id != end_node_id:
+            if robot.current_budget - (
+                    g.vertices[robot.current_vertex].get_edge_towards_vertex(root.node.get_edge_towards_vertex(bestAction).dest.id).sample_cost() +
+                    g.vertices[root.node.get_edge_towards_vertex(bestAction).dest.id].get_edge_towards_vertex(end_node_id).sample_cost()) < 0:
+                #print("here")
+
+                return root, root.node.get_edge_towards_vertex(end_node_id)
+            else:
+
+                robot.next_location = root.node.get_edge_towards_vertex(bestAction).dest.id
+        #robot.root_copy = root.node.get_edge_towards_vertex(bestAction)
+                return root, root.node.get_edge_towards_vertex(bestAction)
+        else:
+            return root, root.node.get_edge_towards_vertex(end_node_id)
     else:
-        return root,root.node.get_edge_towards_vertex(end_node_id)
+        #robot.root_copy = root.node.get_edge_towards_vertex(end_node_id)
+        return root, root.node.get_edge_towards_vertex(end_node_id)
 
 
 def MCTS_simulate(og1,og2, robot_1, robot_2):
@@ -539,8 +512,8 @@ def MCTS_simulate(og1,og2, robot_1, robot_2):
     robot_1.current_vertex = og1.get_start_vertex()
     robot_1.goal_vertex = og1.get_end_vertex()
     og1.vertices[robot_1.current_vertex].set_visited()
-    cumulative_reward_list1 = op.get_gp([], robot_1.current_vertex)
-    cumulative_reward1 = cumulative_reward_list1[0]
+    #robot_1.cumulative_reward_list = op.get_gp([robot_1.current_vertex])
+    #cumulative_reward1 = robot_1.cumulative_reward_list[0]
     #print(cumulative_reward)
     robot_1.traversed = [robot_1.current_vertex]
 
@@ -549,8 +522,8 @@ def MCTS_simulate(og1,og2, robot_1, robot_2):
     robot_2.current_vertex = og2.get_start_vertex()
     robot_2.goal_vertex = og2.get_end_vertex()
     og2.vertices[robot_2.current_vertex].set_visited()
-    cumulative_reward_list2 = op.get_gp([], robot_2.current_vertex)
-    cumulative_reward2 = cumulative_reward_list2[0]
+    #robot_2.cumulative_reward_list = op.get_gp([robot_2.current_vertex])
+    #cumulative_reward2 = robot_2.cumulative_reward_list[0]
     #print(cumulative_reward)
     robot_2.traversed = [robot_2.current_vertex]
 
@@ -562,47 +535,60 @@ def MCTS_simulate(og1,og2, robot_1, robot_2):
 
             # THIS WAS USED FOR ICRA
             #tree,action = MCTS_search_with_constraints_multiple_samples(og,current_vertex,current_budget,rollout_policy,k,max_iterations,expansion_probability=0.1)
-            # THIS IS USED FOR IROS
-            tree1,action1 = MCTS_search_IROS(og1, cumulative_reward_list1, robot_1, robot_2)
-
+            start1 = time.time()
+            tree1,action1 = MCTS_search(og1, og2, robot_1, robot_2)
+            #print(tree1)
+            end1 = time.time()
+            robot_1.times += (end1 - start1)
             robot_1.traversed.append(action1.dest.id)
             print("Robot 1 visited locations {}".format(robot_1.traversed))
 
             if action1 is None:
                 cumulative_reward1=0
-                robot_1.current_budge=-1
+                robot_1.current_budget=-1
                 tree1=None  # failure
             else:
+
+
+
+
+                robot_1.current_budget = robot_1.current_budget - og1.vertices[robot_1.current_vertex].get_edge_towards_vertex(action1.dest.id).sample_cost()  # action1.sample_cost()
+                print("Robot 1 current budget {}".format(robot_1.current_budget))
                 robot_1.current_vertex = action1.dest.id
 
                 list_visited_loc = og1.list_of_visited_vertices()
                 og1.vertices[robot_1.current_vertex].set_visited()
 
-                cumulative_reward_list1 = op.get_gp(list_visited_loc, robot_1.current_vertex)
-                cumulative_reward1 = cumulative_reward1 + cumulative_reward_list1[robot_1.current_vertex] #og.vertices[current_vertex].get_value()  # list_visite_loc
-                robot_1.current_budget = robot_1.current_budget - action1.sample_cost()
+                #cumulative_reward1 = op.get_gp(robot_1.traversed)[robot_1.current_vertex]
+                cumulative_reward1 = robot_1.cumulative_reward_list[robot_1.current_vertex] #og.vertices[current_vertex].get_value()  # list_visite_loc
+                #print(robot_1.current_vertex)
+                #print(robot_1.goal_vertex)
                 if (robot_1.current_budget < 0) or (robot_1.current_vertex == robot_1.goal_vertex):
                     done1 = True
 
         if not done2:
-
-            tree2,action2 = MCTS_search_IROS(og2, cumulative_reward_list2, robot_2, robot_1)
-
+            start2 = time.time()
+            tree2,action2 = MCTS_search(og2, og1, robot_2, robot_1)
+            end2 = time.time()
+            robot_2.times += (end2 - start2)
             robot_2.traversed.append(action2.dest.id)
             print("Robot 2 visited locations {}".format(robot_2.traversed))
             if action2 is None:
                 cumulative_reward2=0
-                robot_2.current_budge=-1
+                robot_2.current_budget=-1
                 tree2=None  # failure
             else:
+
+                robot_2.current_budget = robot_2.current_budget - og2.vertices[robot_2.current_vertex].get_edge_towards_vertex(action2.dest.id).sample_cost()           #action2.sample_cost()
+                print("Robot 2 current budget {}".format(robot_2.current_budget))
                 robot_2.current_vertex = action2.dest.id
 
                 list_visited_loc2 = og2.list_of_visited_vertices()
                 og2.vertices[robot_2.current_vertex].set_visited()
 
-                cumulative_reward_list2 = op.get_gp(list_visited_loc2, robot_1.current_vertex)
-                cumulative_reward2 = cumulative_reward2 + cumulative_reward_list2[robot_2.current_vertex] #og.vertices[current_vertex].get_value()  # list_visite_loc
-                robot_2.current_budget = robot_2.current_budget - action2.sample_cost()
+                #cumulative_reward2 = op.get_gp(robot_2.traversed)[robot_2.current_vertex]
+                cumulative_reward2 =  robot_2.cumulative_reward_list[robot_2.current_vertex] #og.vertices[current_vertex].get_value()  # list_visite_loc
+
                 if (robot_2.current_budget < 0) or (robot_2.current_vertex == robot_2.goal_vertex):
                     done2 = True
 
@@ -622,7 +608,7 @@ def read_configuration(fname):
         raise Exception("Can't read configuration file {}".format(fname))
     global NVERTICES,DEPTHLIMIT,NTRIALS, RETRIES, REPETITIONS,CONTRACTION,LIMITEXPLOREDEPTH
     global EPSMIN,EPSINC,EPSN,ITERMIN,ITERINC,ITERN,MINFREQ,VERBOSE,BIAS,BUDGET
-    global SAMPLESMIN,SAMPLESINC,SAMPLESN,FAILURE_PROB,GREEDY_THRESHOLD
+    global SAMPLESMIN,SAMPLESINC,SAMPLESN,FAILURE_PROB,GREEDY_THRESHOLD, COMUNICATION_RANGE_DIST
     
     if config['MAIN']['NTRIALS'] is None:
         print('Missing configuration parameter ',NTRIALS)
@@ -779,7 +765,7 @@ class Robot:
         self.indicator =0
         self.rewards = []
         self.budgets = []
-        self.times = []
+        self.times = 0
         self.totalRewards = 0
         self.failures = 0
         self.policyFailure = 0
@@ -788,7 +774,11 @@ class Robot:
         self.current_vertex=0
         self.goal_vertex=0
         self.traversed=[]
-        self.it=20 #No of rollout before it chooses the next locations
+        self.it=100 #No of rollout before it chooses the next locations
+        self.root_copy=None
+        self.cumulative_reward_list= [0]*100
+        self.next_location=0
+        self.len_traveresed=0
 
 
 
@@ -807,14 +797,14 @@ class Robot:
 
 
 
-if __name__ == "__main__":
+def main(profiler):
     
     print('Starting...')
     
     read_configuration(args.conf)
 
-    og1 = graph.OrienteeringGraph('2018-06-21_ripperdan.mat') #('graph_test_{}.mat'.format(NVERTICES))
-    og2 = graph.OrienteeringGraph('2018-06-21_ripperdan.mat')
+    og1 = graph.OrienteeringGraph() #('graph_test_{}.mat'.format(NVERTICES)) #'2018-06-21_ripperdan.mat'
+    og2 = graph.OrienteeringGraph() #'2018-06-21_ripperdan.mat'
     if not os.path.isdir(args.logdir):
         print("{} does not exist and will be created".format(args.logdir))
         # create all intermediate folders if needed
@@ -831,12 +821,13 @@ if __name__ == "__main__":
    
     print('Starting simulation')
     ntrials = NTRIALS #No of trials
-    
 
-    
-
-    iterations_list=[1]
-    for iterations in iterations_list:
+    count_f = 0
+    count_l = 0
+    count_r = 0
+    count_t=0
+    iterations_list=[100]
+    for iterations in range(iterations_list[0]):
         #rewards = []
         #budgets = []
         #times = []
@@ -849,7 +840,7 @@ if __name__ == "__main__":
         print("SAMPLES=",SAMPLES) #No of samples to compute the cost and number of simulations
         print("Iterations=",robot_1.it) #No of rollout before it chooses the next locations
 
-        print("Failure probability=",FAILURE_PROB)
+
 
         bar = Bar('Processing', max=ntrials)
         residual = 0
@@ -863,45 +854,71 @@ if __name__ == "__main__":
         best_bias=[]
         best_iterations=[]
         best_reward=[]
+        visited_1=[]
+        visited_2=[]
+        com_visited=[]
+
         for _ in range(ntrials):
+            #robot_1 = Robot()
+            #robot_2 = Robot()
             robot_1.reset_children_map()#CHILDREN_MAP = {}
-            MCTS_IROS_prefill_buffer(og1,robot_1)
-            MCTS_IROS_prefill_buffer(og2, robot_2)
-            start = time.time()
+            robot_2.reset_children_map()
+            MCTS_prefill_buffer(og1,robot_1)
+            MCTS_prefill_buffer(og2, robot_2)
+            profiler.enable()
             reward1,budget1,tree1,traversed1, reward2,budget2,tree2,traversed2 = MCTS_simulate(og1, og2,robot_1, robot_2)
+            profiler.disable()
+            #op.get_gp(traversed1+traversed2)
             #reward1, budget1, tree1, traversed1 = MCTS_simulate(og, robot_2, robot_1)
-            end = time.time()
+
             robot_1.rewards.append(reward1)
             robot_1.budgets.append(budget1)
-            robot_1.times.append(end-start)
-            complete_time_series.append(end-start)
+
+
             complete_reward_series.append(reward1)
             complete_budget_series.append(budget1)
+            visited_1.append(len(traversed1))
+            visited_2.append(len(traversed2))
 
 
             print("\nReward1: ",reward1)
             print("Budget1: ",budget1)
-            print("Time: ",end-start)
+
             print("Path1: ",traversed1)
+            print("len Path1: ", len(traversed1))
             if tree1 is None:
                 robot_1.policyFailure += 1
             if budget1 < 0:
-                robot_1.failures = failures + 1
+                robot_1.failures = robot_1.failures + 1
             else:
                 robot_1.totalRewards += reward1
+                robot_1.len_traveresed=len(robot_1.traversed)
 
 
             print("\nReward2: ",reward2)
             print("Budget2: ",budget2)
             print("Path2: ",traversed2)
+            print("len Path2: ", len(traversed2))
+            common_numb=[]
+
+            for numb in robot_1.traversed:
+                if numb in robot_2.traversed:
+                    common_numb.append(numb)
+            print("common visited locations: ", common_numb)
+            com_visited.append(len(common_numb))
             if tree2 is None:
                 robot_2.policyFailure += 1
             if budget2 < 0:
-                robot_2.failures = failures + 1
+                robot_2.failures = robot_2.failures + 1
             else:
                 robot_2.totalRewards += reward2
+                robot_2.len_traveresed = len(robot_2.traversed)
 
-
+            count_f+= (robot_1.failures+robot_2.failures)/2
+            count_l+=(len(robot_1.traversed)+len(robot_2.traversed))/2
+            if budget1 > 0 and budget2 > 0:
+                count_r =+ len(common_numb)
+                count_t += (robot_1.times + robot_2.times ) / 2
             # reset flags to start a new iteration
             for i in og1.vertices.keys():
                 og1.vertices[i].clear_visited()
@@ -911,34 +928,42 @@ if __name__ == "__main__":
             og2.vertices[0].set_visited()
             bar.next()
         bar.finish()
+
         if ntrials-robot_1.failures > 0:
             av_rev = robot_1.totalRewards/(ntrials-robot_1.failures)
-            av_time = sum(robot_1.times)/ntrials
+
             #print("Average reward: ",av_rev)
             best_residual_budget.append(residual / (ntrials - robot_1.failures))
             best_reward.append(av_rev)
             best_failure_rate.append(robot_1.failures/ntrials)
             best_policy_failure.append(robot_1.policyFailure/ntrials)
-            best_time.append(av_time)
+
             best_bias.append(BIAS)
             best_iterations.append(iterations)
 
-            if  (robot_1.failures/ntrials <= FAILURE_PROB):
-                found_absolute_best = True
-                absolute_best = av_rev
-                best_iterations_val = iterations
+            #if  (robot_1.failures/ntrials <= FAILURE_PROB):
+            #    found_absolute_best = True
+             #   absolute_best = av_rev
+             #   best_iterations_val = iterations
                 #best_epsilon_val = EPSILON
-                absolute_best_time = av_time
+              #  absolute_best_time = av_time
 
-                
+    print("percentage of failure {}".format(count_f/iterations_list[0]))
+    print("percentage of visiting locs {}".format(count_l / iterations_list[0]))
+    print("percentage of revisited locations {}".format(count_r/iterations_list[0]))
+    print("Avg planning time {}".format(count_t / iterations_list[0]))
+
             
     print("----------------")
     print("Comprehensive Results")
     print("Average reward:",best_reward)
     print("Average remaining budget:",best_residual_budget)
-    print("Average time:",best_time)
-    print("Failure rate (rans out of energy):",best_failure_rate)
-    print("Policy failure rate (No tree found):",best_policy_failure)
+
+    #print("Failure rate (rans out of energy):",best_failure_rate)
+    #print("Policy failure rate (No tree found):",best_policy_failure)
+    print("average number of visited by robot 1:",np.mean(visited_1))
+    print("average number of visited by robot 2:", np.mean(visited_2))
+    print("average number of common visited locations:", np.mean(com_visited))
     
     print("----------------")
 
@@ -948,19 +973,19 @@ if __name__ == "__main__":
         f.write("Comprehensive Results\n")
         f.write("Vertices:{}\n".format(NVERTICES))
         f.write("Budget:{}\n".format(BUDGET))
-        f.write("Failure Probability:{}\n".format(FAILURE_PROB))
         f.write("Iterations:{}\n".format(ITERMIN))
         f.write("Independent Runs:{}\n".format(NTRIALS))
         f.write("Average reward: {}\n".format(best_reward))
         f.write("Average residual budget: {}\n".format(best_residual_budget))
-        f.write("Average time: {}\n".format(best_time))
-        f.write("Failure rate: {}\n".format(best_failure_rate))
+    return profiler
 
-    print("Saving data to files....")
-    pickle.dump(best_residual_budget,open(os.path.join(args.logdir,'residual_budget.dat'),"wb"))
-    pickle.dump(best_reward,open(os.path.join(args.logdir,'reward.dat'),"wb"))
-    pickle.dump(best_failure_rate,open(os.path.join(args.logdir,'failure_rate.dat'),"wb"))
-    
-    pickle.dump(complete_time_series,open(os.path.join(args.logdir,'complete_time_series.dat'),"wb"))
-    pickle.dump(complete_reward_series,open(os.path.join(args.logdir,'complete_reward_series.dat'),"wb"))
-    pickle.dump(complete_budget_series,open(os.path.join(args.logdir,'complete_budget_series.dat'),"wb"))
+
+if __name__ == "__main__":
+    profiler= cProfile.Profile()
+
+    profiler=main(profiler)
+
+    stats = pstats.Stats(profiler).sort_stats('tottime')
+    stats.print_stats()
+    #main()
+
